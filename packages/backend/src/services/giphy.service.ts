@@ -1,7 +1,4 @@
-import axios from 'axios';
-import FormData from 'form-data';
-import fs from 'fs';
-import { AppError } from '../utils/errors.js';
+import { AppError } from '../utils/errors';
 
 export interface GiphyUploadResult {
   giphyId: string;
@@ -21,30 +18,26 @@ export async function uploadToGiphy(gifPath: string, tags: string[]): Promise<Gi
 
   const form = new FormData();
   form.append('api_key', apiKey);
-  form.append('file', fs.createReadStream(gifPath), { filename: 'animation.gif' });
+  form.append('file', Bun.file(gifPath), 'animation.gif');
   if (tags.length > 0) form.append('tags', tags.join(','));
 
-  let response;
+  let res: Response;
   try {
-    response = await axios.post<{ data: { id: string } }>(
-      'https://upload.giphy.com/v1/gifs',
-      form,
-      {
-        headers: form.getHeaders(),
-        timeout: 120000,
-        maxBodyLength: 200 * 1024 * 1024,
-      }
-    );
+    res = await fetch('https://upload.giphy.com/v1/gifs', {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(120000),
+    });
   } catch (err) {
-    if (axios.isAxiosError(err)) {
-      const status = err.response?.status;
-      if (status === 429) throw new AppError('RATE_LIMITED', 'Giphy rate limit reached. Try again in a few minutes.', 429);
-      if (status === 413) throw new AppError('FILE_TOO_LARGE', 'GIF is too large for Giphy (max ~100MB). Reduce quality or trim length.', 413);
-    }
     throw new AppError('GIPHY_UPLOAD_FAILED', `Giphy upload failed: ${String(err)}`, 502);
   }
 
-  const id = response.data.data.id;
+  if (res.status === 429) throw new AppError('RATE_LIMITED', 'Giphy rate limit reached. Try again in a few minutes.', 429);
+  if (res.status === 413) throw new AppError('FILE_TOO_LARGE', 'GIF is too large for Giphy (max ~100MB). Reduce quality or trim length.', 413);
+  if (!res.ok) throw new AppError('GIPHY_UPLOAD_FAILED', `Giphy upload failed: HTTP ${res.status}`, 502);
+
+  const data = await res.json() as { data: { id: string } };
+  const id = data.data.id;
   return {
     giphyId: id,
     giphyUrl: `https://media.giphy.com/media/${id}/giphy.gif`,

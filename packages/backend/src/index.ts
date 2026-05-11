@@ -1,24 +1,27 @@
-import 'dotenv/config';
-import { execSync } from 'child_process';
-import { createApp } from './app.js';
-import { setFfmpegBin } from './services/ffmpeg.service.js';
+import ffmpegStaticPath from 'ffmpeg-static';
+import { setFfmpegBin } from './services/ffmpeg.service';
+import { createRequestHandler } from './app';
 
-// Use system FFmpeg if available (e.g. installed via Railway nixpacks),
-// otherwise fall back to the bundled ffmpeg-static binary.
 function resolveFFmpegPath(): string {
+  const cmd = process.platform === 'win32' ? 'where' : 'which';
   try {
-    const p = execSync('which ffmpeg', { encoding: 'utf8' }).trim();
-    if (p) return p;
+    const result = Bun.spawnSync([cmd, 'ffmpeg']);
+    if (result.exitCode === 0) {
+      const p = new TextDecoder().decode(result.stdout).trim().split('\n')[0].trim();
+      if (p) return p;
+    }
   } catch { /* not found on PATH */ }
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  return require('ffmpeg-static') as string;
+  if (!ffmpegStaticPath) throw new Error('No FFmpeg binary found on PATH or via ffmpeg-static');
+  return ffmpegStaticPath;
 }
 
 setFfmpegBin(resolveFFmpegPath());
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
-const app = createApp();
 
-app.listen(PORT, () => {
-  console.log(`sns-to-gif backend listening on http://localhost:${PORT}`);
+Bun.serve({
+  port: PORT,
+  fetch: createRequestHandler(),
 });
+
+console.log(`sns-to-gif backend listening on http://localhost:${PORT}`);

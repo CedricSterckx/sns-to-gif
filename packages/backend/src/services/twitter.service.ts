@@ -1,7 +1,6 @@
-import axios from 'axios';
-import { extractTweetId } from '../utils/url-parser.js';
-import { NotFoundError, RateLimitError, UpstreamError } from '../utils/errors.js';
-import type { MediaInfo } from '../types/media.types.js';
+import { extractTweetId } from '../utils/url-parser';
+import { NotFoundError, RateLimitError, UpstreamError } from '../utils/errors';
+import type { MediaInfo } from '../types/media.types';
 
 interface FxTwitterVariant {
   content_type: string;
@@ -24,33 +23,28 @@ interface FxTwitterResponse {
   message: string;
   tweet?: {
     author?: { screen_name: string };
-    media?: {
-      all?: FxTwitterMedia[];
-    };
+    media?: { all?: FxTwitterMedia[] };
   };
 }
 
 export async function fetchTwitterMedia(rawUrl: string): Promise<MediaInfo> {
   const tweetId = extractTweetId(rawUrl);
 
-  let response;
+  let res: Response;
   try {
-    response = await axios.get<FxTwitterResponse>(
-      `https://api.fxtwitter.com/u/status/${tweetId}`,
-      {
-        timeout: 15000,
-        headers: { 'User-Agent': 'sns-to-gif/1.0' },
-      }
-    );
-  } catch (err: unknown) {
-    if (axios.isAxiosError(err)) {
-      if (err.response?.status === 429) throw new RateLimitError('Twitter rate limit hit');
-      if (err.response?.status === 404) throw new NotFoundError('Tweet not found');
-    }
+    res = await fetch(`https://api.fxtwitter.com/u/status/${tweetId}`, {
+      headers: { 'User-Agent': 'sns-to-gif/1.0' },
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (err) {
     throw new UpstreamError(`fxtwitter request failed: ${String(err)}`);
   }
 
-  const data = response.data;
+  if (res.status === 429) throw new RateLimitError('Twitter rate limit hit');
+  if (res.status === 404) throw new NotFoundError('Tweet not found');
+  if (!res.ok) throw new UpstreamError(`fxtwitter request failed: HTTP ${res.status}`);
+
+  const data = await res.json() as FxTwitterResponse;
   if (!data.tweet) throw new NotFoundError('Tweet not found or has no media');
 
   const allMedia = data.tweet.media?.all ?? [];
@@ -59,7 +53,6 @@ export async function fetchTwitterMedia(rawUrl: string): Promise<MediaInfo> {
 
   let videoUrl = videoMedia.url;
 
-  // Pick the highest-bitrate MP4 variant if available
   if (videoMedia.variants && videoMedia.variants.length > 0) {
     const mp4Variants = videoMedia.variants.filter(
       (v) => v.content_type === 'video/mp4' && v.url

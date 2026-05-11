@@ -1,8 +1,7 @@
-import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getTempDir, getOutputDir, cleanupFile } from '../utils/temp.js';
-import type { GifOptions, TextOverlay } from '../types/job.types.js';
+import { getTempDir, getOutputDir, cleanupFile } from '../utils/temp';
+import type { GifOptions, TextOverlay } from '../types/job.types';
 
 let ffmpegBin = 'ffmpeg';
 
@@ -19,7 +18,6 @@ function buildDrawtextFilter(overlay: TextOverlay, outWidth: number): string {
   const x = Math.round((overlay.x / 100) * outWidth);
   const y = Math.round((overlay.y / 100) * outHeight);
   const color = overlay.color.replace('#', '');
-  // Escape characters that have special meaning in drawtext expressions
   const text = overlay.text
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "\\'")
@@ -54,7 +52,6 @@ function buildBaseFilters(opts: GifOptions, withText: boolean): string[] {
   const pts = speedToPts(opts.speed);
   if (opts.speed !== 1) filters.push(`setpts=${pts}*PTS`);
 
-  // Use -2 so height is always divisible by 2 (required by some decoders)
   filters.push(`scale=${outWidth}:-2:flags=lanczos`);
 
   if (withText && opts.textOverlays?.length) {
@@ -66,40 +63,40 @@ function buildBaseFilters(opts: GifOptions, withText: boolean): string[] {
   return filters;
 }
 
-function runFfmpeg(
+async function runFfmpeg(
   args: string[],
   trimDuration: number,
   onProgress?: (pct: number) => void
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
-    let stderr = '';
-
-    proc.stderr!.on('data', (chunk: Buffer) => {
-      const text = chunk.toString();
-      stderr += text;
-
-      if (onProgress && trimDuration > 0) {
-        // ffmpeg writes "time=HH:MM:SS.cc" to stderr during encoding
-        const m = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d+)/);
-        if (m) {
-          const elapsed =
-            parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
-          onProgress(Math.min(99, (elapsed / trimDuration) * 100));
-        }
-      }
-    });
-
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`ffmpeg exited with code ${code}:\n${stderr.slice(-2000)}`));
-      }
-    });
-
-    proc.on('error', (err) => reject(err));
+  const proc = Bun.spawn([ffmpegBin, ...args], {
+    stdin: 'ignore',
+    stdout: 'ignore',
+    stderr: 'pipe',
   });
+
+  const decoder = new TextDecoder();
+  let stderr = '';
+
+  const reader = proc.stderr.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value);
+    stderr += text;
+
+    if (onProgress && trimDuration > 0) {
+      const m = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d+)/);
+      if (m) {
+        const elapsed = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
+        onProgress(Math.min(99, (elapsed / trimDuration) * 100));
+      }
+    }
+  }
+
+  const code = await proc.exited;
+  if (code !== 0) {
+    throw new Error(`ffmpeg exited with code ${code}:\n${stderr.slice(-2000)}`);
+  }
 }
 
 export async function convertToGif(
@@ -124,7 +121,6 @@ export async function convertToGif(
   };
   const q = qualityMap[opts.quality];
 
-  // Pass 1 — generate palette from video frames
   const pass1Vf = [
     ...buildBaseFilters(opts, false),
     `palettegen=max_colors=${q.colors}:stats_mode=diff`,
@@ -137,7 +133,6 @@ export async function convertToGif(
 
   onProgress(40);
 
-  // Pass 2 — encode GIF using the generated palette
   const baseFilters = buildBaseFilters(opts, true);
   const paletteuse =
     q.dither === 'none'
@@ -146,7 +141,6 @@ export async function convertToGif(
           opts.quality === 'high' ? ':diff_mode=rectangle' : ''
         }`;
 
-  // Each arg is a separate array element — no shell quoting or space-splitting issues
   const filterComplex = `${baseFilters.join(',')} [x]; [x][1:v] ${paletteuse}`;
 
   await runFfmpeg(

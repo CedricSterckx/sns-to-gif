@@ -1,43 +1,36 @@
-import { Router, Request, Response } from 'express';
-import axios from 'axios';
+import { json, CORS_HEADERS } from '../utils/response';
 
-const router = Router();
+export async function serveProxy(req: Request): Promise<Response> {
+  const url = new URL(req.url).searchParams.get('url');
+  if (!url) return json({ error: 'url query param required' }, 400);
 
-// Stream any video URL through the backend with appropriate headers.
-// Needed for Twitter CDN URLs which block direct browser requests (403).
-router.get('/', async (req: Request, res: Response) => {
-  const url = req.query.url as string;
-  if (!url) return res.status(400).json({ error: 'url query param required' });
-
-  const upstream: Record<string, string> = {
+  const upstreamHeaders: Record<string, string> = {
     'User-Agent':
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     Referer: 'https://twitter.com/',
     Origin: 'https://twitter.com',
   };
-  if (req.headers.range) upstream['Range'] = req.headers.range;
+
+  const rangeHeader = req.headers.get('range');
+  if (rangeHeader) upstreamHeaders['Range'] = rangeHeader;
 
   try {
-    const upstream_res = await axios.get<NodeJS.ReadableStream>(url, {
-      responseType: 'stream',
-      headers: upstream,
-      timeout: 30000,
-      validateStatus: () => true, // let us forward non-200 statuses too
+    const upstream = await fetch(url, {
+      headers: upstreamHeaders,
+      signal: AbortSignal.timeout(30000),
     });
 
-    res.status(upstream_res.status);
-
+    const responseHeaders = new Headers(CORS_HEADERS);
     for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
-      const val = upstream_res.headers[h];
-      if (val) res.setHeader(h, val);
+      const val = upstream.headers.get(h);
+      if (val) responseHeaders.set(h, val);
     }
 
-    (upstream_res.data as NodeJS.ReadableStream).pipe(res);
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: responseHeaders,
+    });
   } catch (err) {
-    if (!res.headersSent) {
-      res.status(502).json({ error: 'PROXY_ERROR', message: String(err) });
-    }
+    return json({ error: 'PROXY_ERROR', message: String(err) }, 502);
   }
-});
-
-export default router;
+}

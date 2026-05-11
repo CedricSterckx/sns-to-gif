@@ -1,8 +1,7 @@
-import { v4 as uuidv4 } from 'uuid';
-import { downloadToTemp } from './downloader.service.js';
-import { convertToGif } from './ffmpeg.service.js';
-import { cleanupFile } from '../utils/temp.js';
-import type { Job, GifOptions } from '../types/job.types.js';
+import { downloadToTemp } from './downloader.service';
+import { convertToGif } from './ffmpeg.service';
+import { cleanupFile } from '../utils/temp';
+import type { Job, GifOptions } from '../types/job.types';
 
 const jobs = new Map<string, Job>();
 let activeJobs = 0;
@@ -10,7 +9,7 @@ const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_JOBS ?? '2', 10);
 
 export function enqueueJob(options: GifOptions): Job {
   const job: Job = {
-    id: uuidv4(),
+    id: crypto.randomUUID(),
     status: 'queued',
     options,
     progress: 0,
@@ -65,12 +64,7 @@ async function runJob(job: Job): Promise<void> {
       (pct) => updateJob(job.id, { progress: 20 + Math.round(pct * 0.8) })
     );
 
-    updateJob(job.id, {
-      status: 'done',
-      progress: 100,
-      outputPath,
-      fileSizeBytes,
-    });
+    updateJob(job.id, { status: 'done', progress: 100, outputPath, fileSizeBytes });
   } catch (err) {
     updateJob(job.id, {
       status: 'failed',
@@ -81,7 +75,6 @@ async function runJob(job: Job): Promise<void> {
   }
 }
 
-// Clean up output GIFs older than GIF_EXPIRY_HOURS
 const expiryHours = parseInt(process.env.GIF_EXPIRY_HOURS ?? '1', 10);
 setInterval(() => {
   const cutoff = Date.now() - expiryHours * 60 * 60 * 1000;

@@ -1,8 +1,8 @@
 [phases.setup]
-nixPkgs = ["ffmpeg"]
+nixPkgs = ["ffmpeg", "bun"]
 
 [phases.build]
-cmds = ["npm install", "npm run build"]
+cmds = ["npm install", "npm run build -w packages/frontend"]
 
 [start]
-cmd = "node packages/backend/dist/index.js"
+cmd = "bun packages/backend/src/index.ts"
