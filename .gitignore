@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.local
+packages/backend/output/
+packages/backend/tmp/
+*.gif
+*.mp4
+palette_*.png

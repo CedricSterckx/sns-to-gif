@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Cedric\\\\Documents\\\\Git\\\\sns-media-downloader-nexus\" -Recurse -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Cedric\\\\Documents\\\\Git\\\\sns-to-gif\" -Recurse -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "PowerShell(@\\(Get-ChildItem -Path \"C:\\\\Users\\\\Cedric\\\\.claude\\\\projects\\\\C--Users-Cedric-Documents-Git-sns-to-gif\\\\memory\\\\\" -Force\\) | ForEach-Object { $_.FullName })",
+      "PowerShell(\\(Get-Item \"C:\\\\Users\\\\Cedric\\\\Documents\\\\Git\\\\sns-to-gif\"\\).GetFiles\\(\\) | Format-Table Name, Length, LastWriteTime)",
+      "PowerShell(\\(Get-Item \"C:\\\\Users\\\\Cedric\\\\Documents\\\\Git\\\\sns-to-gif\"\\).GetDirectories\\(\\) | Format-Table Name)",
+      "PowerShell(\\(Get-Item \"C:\\\\Users\\\\Cedric\\\\.claude\\\\projects\\\\C--Users-Cedric-Documents-Git-sns-to-gif\\\\memory\"\\).GetFiles\\(\\) | Format-Table Name, Length, LastWriteTime)",
+      "PowerShell(\\(Get-Item \"C:\\\\Users\\\\Cedric\\\\.claude\\\\projects\\\\C--Users-Cedric-Documents-Git-sns-to-gif\\\\memory\"\\).GetDirectories\\(\\) | Format-Table Name)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(timeout 8 npx tsx src/index.ts)",
+      "Bash(npx vite *)",
+      "WebSearch"
+    ]
+  }
+}
