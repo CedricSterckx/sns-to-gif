@@ -15,7 +15,16 @@
       "Bash(npx tsc *)",
       "Bash(timeout 8 npx tsx src/index.ts)",
       "Bash(npx vite *)",
-      "WebSearch"
+      "WebSearch",
+      "mcp__railway-mcp-server__list-deployments",
+      "Bash(railway link *)",
+      "mcp__railway-mcp-server__get-logs",
+      "mcp__railway-mcp-server__generate-domain",
+      "mcp__railway-mcp-server__list-variables",
+      "mcp__railway-mcp-server__set-variables",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }

@@ -7,3 +7,5 @@ packages/backend/tmp/
 *.gif
 *.mp4
 palette_*.png
+.claude/settings.local.json
+.claude/settings.local.json
