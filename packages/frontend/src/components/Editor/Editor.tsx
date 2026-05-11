@@ -5,10 +5,11 @@ import { SpeedPanel } from './SpeedPanel';
 import { CropPanel } from './CropPanel';
 import { TextPanel } from './TextPanel';
 import { OutputPanel } from './OutputPanel';
+import type { CropRect } from '../VideoPreview/CropOverlay';
 import type { TextOverlay } from '../../types/job.types';
 import type { MediaInfo } from '../../types/media.types';
 
-interface CropRect { x: number; y: number; width: number; height: number }
+export type { CropRect };
 
 export interface EditorState {
   trimStart: number;
@@ -54,15 +55,18 @@ export function Editor({ media, state, onChange }: EditorProps) {
           trimEnd={state.trimEnd}
           textOverlays={state.textOverlays}
           videoRef={videoRef}
+          showCropOverlay={activePanel === 'crop'}
+          onCropChange={(c) => onChange({ crop: c })}
           onDurationChange={(d) => {
             setDuration(d);
-            // Always clamp trimEnd to actual duration (default of 10s exceeds short videos)
             if (state.trimEnd > d) onChange({ trimEnd: d });
           }}
           onTimeUpdate={() => {}}
         />
         <p className="mt-1 text-center text-xs text-gray-400">
-          Live preview — fast, no encoding
+          {activePanel === 'crop'
+            ? 'Draw on the video to select crop area'
+            : 'Live preview — fast, no encoding'}
         </p>
       </div>
 

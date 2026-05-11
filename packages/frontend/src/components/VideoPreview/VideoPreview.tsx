@@ -1,13 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { CanvasOverlay } from './CanvasOverlay';
+import { CropOverlay, CropRect } from './CropOverlay';
 import type { TextOverlay } from '../../types/job.types';
-
-interface CropRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 interface VideoPreviewProps {
   src: string;
@@ -17,6 +11,8 @@ interface VideoPreviewProps {
   trimEnd: number;
   textOverlays: TextOverlay[];
   videoRef: React.RefObject<HTMLVideoElement>;
+  showCropOverlay?: boolean;
+  onCropChange?: (crop: CropRect | null) => void;
   onDurationChange?: (duration: number) => void;
   onTimeUpdate?: (time: number) => void;
 }
@@ -29,6 +25,8 @@ export function VideoPreview({
   trimEnd,
   textOverlays,
   videoRef,
+  showCropOverlay = false,
+  onCropChange,
   onDurationChange,
   onTimeUpdate,
 }: VideoPreviewProps) {
@@ -37,12 +35,13 @@ export function VideoPreview({
   const [currentTime, setCurrentTime] = useState(0);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
       setContainerSize({ width, height });
     });
-    ro.observe(containerRef.current);
+    ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
@@ -61,17 +60,18 @@ export function VideoPreview({
     }
   }
 
-  // CSS transform for crop/zoom preview
+  // When crop is active, apply a CSS transform to give a "live zoom" feel.
+  // This is cosmetic only — FFmpeg uses the raw crop rect for export.
   let cropStyle: React.CSSProperties = {};
-  if (crop && crop.width > 0 && crop.height > 0) {
+  if (crop && crop.width > 0 && crop.height > 0 && !showCropOverlay) {
     const video = videoRef.current;
-    const vidW = video?.videoWidth || 1;
-    const vidH = video?.videoHeight || 1;
-    const scaleX = containerSize.width / crop.width;
+    const vw = video?.videoWidth  || 1;
+    const vh = video?.videoHeight || 1;
+    const scaleX = containerSize.width  / crop.width;
     const scaleY = containerSize.height / crop.height;
-    const scale = Math.min(scaleX, scaleY);
-    const tx = -(crop.x / vidW) * containerSize.width * scale;
-    const ty = -(crop.y / vidH) * containerSize.height * scale;
+    const scale  = Math.min(scaleX, scaleY);
+    const tx = -(crop.x / vw) * containerSize.width  * scale;
+    const ty = -(crop.y / vh) * containerSize.height * scale;
     cropStyle = { transform: `scale(${scale}) translate(${tx}px, ${ty}px)`, transformOrigin: '0 0' };
   }
 
@@ -84,7 +84,7 @@ export function VideoPreview({
       <video
         ref={videoRef}
         src={src}
-        className="h-full w-full object-contain"
+        className="h-full w-full object-contain transition-transform duration-150"
         style={cropStyle}
         autoPlay
         loop
@@ -98,12 +98,21 @@ export function VideoPreview({
         }}
         onTimeUpdate={handleTimeUpdate}
       />
+
       <CanvasOverlay
         overlays={textOverlays}
         width={containerSize.width}
         height={containerSize.height}
         currentTime={currentTime}
       />
+
+      {showCropOverlay && onCropChange && (
+        <CropOverlay
+          videoRef={videoRef}
+          crop={crop ?? null}
+          onChange={onCropChange}
+        />
+      )}
     </div>
   );
 }
