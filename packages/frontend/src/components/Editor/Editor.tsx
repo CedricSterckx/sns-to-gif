@@ -56,7 +56,8 @@ export function Editor({ media, state, onChange }: EditorProps) {
           videoRef={videoRef}
           onDurationChange={(d) => {
             setDuration(d);
-            if (state.trimEnd === 0) onChange({ trimEnd: Math.min(d, 10) });
+            // Always clamp trimEnd to actual duration (default of 10s exceeds short videos)
+            if (state.trimEnd > d) onChange({ trimEnd: d });
           }}
           onTimeUpdate={() => {}}
         />

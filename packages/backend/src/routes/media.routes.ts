@@ -23,7 +23,14 @@ router.post('/fetch', async (req: Request, res: Response, next: NextFunction) =>
         ? await fetchTwitterMedia(url.trim())
         : await fetchInstagramMedia(url.trim());
 
-    return res.json(media);
+    // The raw CDN URL is kept as `directUrl` for server-side FFmpeg downloads.
+    // `videoUrl` is rewritten to go through our proxy so the browser <video>
+    // element gets the correct headers (Referer, etc.) that Twitter requires.
+    return res.json({
+      ...media,
+      directUrl: media.videoUrl,
+      videoUrl: `/api/proxy?url=${encodeURIComponent(media.videoUrl)}`,
+    });
   } catch (err) {
     next(err);
   }

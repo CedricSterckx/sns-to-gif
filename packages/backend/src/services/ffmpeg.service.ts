@@ -1,26 +1,38 @@
-import ffmpeg from 'fluent-ffmpeg';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { getTempDir, getOutputDir, cleanupFile } from '../utils/temp.js';
 import type { GifOptions, TextOverlay } from '../types/job.types.js';
 
-function speedToPts(speed: number): number {
-  return 1 / speed;
+let ffmpegBin = 'ffmpeg';
+
+export function setFfmpegBin(p: string) {
+  ffmpegBin = p;
 }
 
-function buildDrawtextFilter(overlay: TextOverlay, outputWidth: number, outputHeight: number): string {
-  const x = Math.round((overlay.x / 100) * outputWidth);
-  const y = Math.round((overlay.y / 100) * outputHeight);
+function speedToPts(speed: number): string {
+  return (1 / speed).toFixed(6);
+}
+
+function buildDrawtextFilter(overlay: TextOverlay, outWidth: number): string {
+  const outHeight = Math.round((outWidth * 9) / 16);
+  const x = Math.round((overlay.x / 100) * outWidth);
+  const y = Math.round((overlay.y / 100) * outHeight);
   const color = overlay.color.replace('#', '');
+  // Escape characters that have special meaning in drawtext expressions
+  const text = overlay.text
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/:/g, '\\:');
+
   const timeFilter =
     overlay.startSec !== undefined && overlay.endSec !== undefined
       ? `:enable='between(t,${overlay.startSec},${overlay.endSec})'`
       : '';
-  const escapedText = overlay.text.replace(/'/g, "\\'").replace(/:/g, '\\:');
 
   return (
-    `drawtext=text='${escapedText}'` +
-    `:fontcolor=${color}` +
+    `drawtext=text='${text}'` +
+    `:fontcolor=0x${color}` +
     `:fontsize=${overlay.fontSize}` +
     `:x=${x}:y=${y}` +
     `:box=1:boxcolor=black@0.5:boxborderw=4` +
@@ -28,8 +40,9 @@ function buildDrawtextFilter(overlay: TextOverlay, outputWidth: number, outputHe
   );
 }
 
-function buildVfChain(opts: GifOptions, palettePass: boolean): string {
+function buildBaseFilters(opts: GifOptions, withText: boolean): string[] {
   const filters: string[] = [];
+  const outWidth = opts.resize?.width ?? 480;
 
   if (opts.crop) {
     const { x, y, width, height } = opts.crop;
@@ -39,29 +52,54 @@ function buildVfChain(opts: GifOptions, palettePass: boolean): string {
   filters.push(`fps=${opts.fps}`);
 
   const pts = speedToPts(opts.speed);
-  if (pts !== 1) filters.push(`setpts=${pts}*PTS`);
+  if (opts.speed !== 1) filters.push(`setpts=${pts}*PTS`);
 
-  const outWidth = opts.resize?.width ?? 480;
-  filters.push(`scale=${outWidth}:-1:flags=lanczos`);
+  // Use -2 so height is always divisible by 2 (required by some decoders)
+  filters.push(`scale=${outWidth}:-2:flags=lanczos`);
 
-  const qualityMap = {
-    low: { colors: 64 },
-    medium: { colors: 128 },
-    high: { colors: 256 },
-  };
-  const { colors } = qualityMap[opts.quality];
-
-  if (palettePass) {
-    filters.push(`palettegen=max_colors=${colors}:stats_mode=diff`);
-  } else {
-    if (opts.textOverlays && opts.textOverlays.length > 0) {
-      for (const overlay of opts.textOverlays) {
-        filters.push(buildDrawtextFilter(overlay, outWidth, Math.round((outWidth * 9) / 16)));
-      }
+  if (withText && opts.textOverlays?.length) {
+    for (const overlay of opts.textOverlays) {
+      if (overlay.text.trim()) filters.push(buildDrawtextFilter(overlay, outWidth));
     }
   }
 
-  return filters.join(',');
+  return filters;
+}
+
+function runFfmpeg(
+  args: string[],
+  trimDuration: number,
+  onProgress?: (pct: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+
+    proc.stderr!.on('data', (chunk: Buffer) => {
+      const text = chunk.toString();
+      stderr += text;
+
+      if (onProgress && trimDuration > 0) {
+        // ffmpeg writes "time=HH:MM:SS.cc" to stderr during encoding
+        const m = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d+)/);
+        if (m) {
+          const elapsed =
+            parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
+          onProgress(Math.min(99, (elapsed / trimDuration) * 100));
+        }
+      }
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg exited with code ${code}:\n${stderr.slice(-2000)}`));
+      }
+    });
+
+    proc.on('error', (err) => reject(err));
+  });
 }
 
 export async function convertToGif(
@@ -75,71 +113,55 @@ export async function convertToGif(
   const palettePath = path.join(tempDir, `palette_${jobId}.png`);
   const outputPath = path.join(outputDir, `${jobId}.gif`);
 
-  const ss = opts.trim.startSec;
-  const to = opts.trim.endSec;
-  const vf1 = buildVfChain(opts, true);
+  const ss = String(opts.trim.startSec);
+  const to = String(opts.trim.endSec);
+  const trimDuration = opts.trim.endSec - opts.trim.startSec;
 
-  // Pass 1: generate palette
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(inputPath)
-      .seekInput(ss)
-      .inputOption(`-to ${to}`)
-      .outputOptions([`-vf ${vf1}`, '-vframes 1'])
-      .save(palettePath)
-      .on('end', () => resolve())
-      .on('error', (e: Error) => reject(e));
-  });
+  const qualityMap = {
+    low: { colors: 64, dither: 'none', bayerScale: 0 },
+    medium: { colors: 128, dither: 'bayer', bayerScale: 3 },
+    high: { colors: 256, dither: 'bayer', bayerScale: 5 },
+  };
+  const q = qualityMap[opts.quality];
+
+  // Pass 1 — generate palette from video frames
+  const pass1Vf = [
+    ...buildBaseFilters(opts, false),
+    `palettegen=max_colors=${q.colors}:stats_mode=diff`,
+  ].join(',');
+
+  await runFfmpeg(
+    ['-ss', ss, '-to', to, '-i', inputPath, '-vf', pass1Vf, '-vframes', '1', '-y', palettePath],
+    trimDuration
+  );
 
   onProgress(40);
 
-  // Build pass-2 filtergraph with palette
-  const baseFilters: string[] = [];
-
-  if (opts.crop) {
-    const { x, y, width, height } = opts.crop;
-    baseFilters.push(`crop=${width}:${height}:${x}:${y}`);
-  }
-  baseFilters.push(`fps=${opts.fps}`);
-  const pts = speedToPts(opts.speed);
-  if (pts !== 1) baseFilters.push(`setpts=${pts}*PTS`);
-  const outWidth = opts.resize?.width ?? 480;
-  baseFilters.push(`scale=${outWidth}:-1:flags=lanczos`);
-
-  if (opts.textOverlays && opts.textOverlays.length > 0) {
-    for (const overlay of opts.textOverlays) {
-      baseFilters.push(buildDrawtextFilter(overlay, outWidth, Math.round((outWidth * 9) / 16)));
-    }
-  }
-
-  const qualityMap = {
-    low: { dither: 'none', bayer_scale: 0 },
-    medium: { dither: 'bayer', bayer_scale: 3 },
-    high: { dither: 'bayer', bayer_scale: 5 },
-  };
-  const q = qualityMap[opts.quality];
+  // Pass 2 — encode GIF using the generated palette
+  const baseFilters = buildBaseFilters(opts, true);
   const paletteuse =
     q.dither === 'none'
       ? 'paletteuse=dither=none'
-      : `paletteuse=dither=${q.dither}:bayer_scale=${q.bayer_scale}${opts.quality === 'high' ? ':diff_mode=rectangle' : ''}`;
+      : `paletteuse=dither=${q.dither}:bayer_scale=${q.bayerScale}${
+          opts.quality === 'high' ? ':diff_mode=rectangle' : ''
+        }`;
 
-  const lavfi = `${baseFilters.join(',')} [x]; [x][1:v] ${paletteuse}`;
+  // Each arg is a separate array element — no shell quoting or space-splitting issues
+  const filterComplex = `${baseFilters.join(',')} [x]; [x][1:v] ${paletteuse}`;
 
-  // Pass 2: encode GIF
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(inputPath)
-      .seekInput(ss)
-      .inputOption(`-to ${to}`)
-      .input(palettePath)
-      .outputOptions([`-lavfi ${lavfi}`, '-an'])
-      .save(outputPath)
-      .on('progress', (info: { percent?: number }) => {
-        if (info.percent !== undefined) {
-          onProgress(40 + Math.min(55, info.percent * 0.55));
-        }
-      })
-      .on('end', () => resolve())
-      .on('error', (e: Error) => reject(e));
-  });
+  await runFfmpeg(
+    [
+      '-ss', ss,
+      '-to', to,
+      '-i', inputPath,
+      '-i', palettePath,
+      '-filter_complex', filterComplex,
+      '-an',
+      '-y', outputPath,
+    ],
+    trimDuration,
+    (pct) => onProgress(40 + Math.round(pct * 0.6))
+  );
 
   cleanupFile(palettePath);
 

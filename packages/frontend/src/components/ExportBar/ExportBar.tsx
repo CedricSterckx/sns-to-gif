@@ -36,7 +36,7 @@ export function ExportBar({ media, editorState }: ExportBarProps) {
 
   function handleExport() {
     submitJob({
-      videoUrl: media.videoUrl,
+      videoUrl: media.directUrl,  // use raw CDN URL for server-side FFmpeg download
       trim: { startSec: editorState.trimStart, endSec: editorState.trimEnd },
       speed: editorState.speed,
       crop: editorState.crop ?? undefined,
